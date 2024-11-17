@@ -127,7 +127,9 @@ String fauxmoESP::_deviceJson(unsigned char id, bool all = true) {
 			FAUXMO_DEVICE_JSON_TEMPLATE,
 			device.name, device.uniqueid,
 			device.state ? "true": "false",
-			device.value
+			device.value,
+			device.hue,
+			device.sat
 		);
 	}
 	else
@@ -135,7 +137,8 @@ String fauxmoESP::_deviceJson(unsigned char id, bool all = true) {
 		snprintf_P(
 			buffer, sizeof(buffer),
 			FAUXMO_DEVICE_JSON_TEMPLATE_SHORT,
-			device.name, device.uniqueid
+			device.name,
+			device.uniqueid
 		);
 	}
 
@@ -323,6 +326,8 @@ bool fauxmoESP::_onTCPControl(AsyncClient *client, String url, String body) {
 				_devices[id].rgb[0] = rgb[0];
 				_devices[id].rgb[1] = rgb[1];
 				_devices[id].rgb[2] = rgb[2];
+				_devices[id].hue = hue;
+				_devices[id].sat = sat;
 			} else if ((pos = body.indexOf("ct")) > 0) {
 				_devices[id].state = true;
 				uint16_t ct = body.substring(pos+4).toInt();
@@ -330,6 +335,8 @@ bool fauxmoESP::_onTCPControl(AsyncClient *client, String url, String body) {
 				_devices[id].rgb[0] = rgb[0];
 				_devices[id].rgb[1] = rgb[1];
 				_devices[id].rgb[2] = rgb[2];
+				_devices[id].hue = 0;
+				_devices[id].sat = 0;
 			} else if (body.indexOf("false") > 0) {
 				_devices[id].state = false;
 			} else {
