@@ -74,18 +74,31 @@ THE SOFTWARE.
 #include <MD5Builder.h>
 #include "templates.h"
 
-typedef std::function<void(unsigned char, const char *, bool, unsigned char)> TSetStateCallback;
-typedef std::function<void(unsigned char, const char *, bool, unsigned char, byte *)> TSetStateWithColorCallback;
+typedef struct {
+    uint16_t hue;
+    uint8_t sat;
+} hs_color_t;
 
 typedef struct {
-    char * name;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+} rgb_color_t;
+
+
+typedef struct {
+    char *name;
     bool state;
     unsigned char value;
-    byte rgb[3] = {255, 255, 255};
-    byte hue = 0;
-    byte sat = 0;
+    hs_color_t hs_color = {0, 0};
     char uniqueid[FAUXMO_DEVICE_UNIQUE_ID_LENGTH];
 } fauxmoesp_device_t;
+
+
+typedef std::function<void(unsigned char, const char *, bool, unsigned char)> TSetStateCallback;
+typedef std::function<void(unsigned char, const char *, bool, unsigned char, rgb_color_t rgb)> TSetStateWithRGBColorCallback;
+typedef std::function<void(unsigned char, const char *, bool, unsigned char, hs_color_t color)> TSetStateWithHSColorCallback;
+
 
 class fauxmoESP {
 
@@ -102,11 +115,14 @@ class fauxmoESP {
         int getDeviceId(const char * device_name);
         void setDeviceUniqueId(unsigned char id, const char *uniqueid);
         void onSetState(TSetStateCallback fn) { _setStateCallback = fn; }
-        void onSetState(TSetStateWithColorCallback fn) { _setStateWithColorCallback = fn; }
+        void onSetState(TSetStateWithRGBColorCallback fn) { _setStateWithRGBColorCallback = fn; }
+        void onSetState(TSetStateWithHSColorCallback fn) { _setStateWithHSColorCallback = fn; }
         bool setState(unsigned char id, bool state, unsigned char value);
+        bool setState(unsigned char id, bool state, unsigned char value, rgb_color_t rgb);
+        bool setState(unsigned char id, bool state, unsigned char value, hs_color_t hs_color);
         bool setState(const char * device_name, bool state, unsigned char value);
-        bool setState(unsigned char id, bool state, unsigned char value, byte* rgb);
-        bool setState(const char * device_name, bool state, unsigned char value, byte* rgb);
+        bool setState(const char * device_name, bool state, unsigned char value, rgb_color_t rgb);
+        bool setState(const char * device_name, bool state, unsigned char value, hs_color_t hs_color);
         bool process(AsyncClient *client, bool isGet, String url, String body);
         void enable(bool enable);
         void createServer(bool internal) { _internal = internal; }
@@ -126,7 +142,8 @@ class fauxmoESP {
         WiFiUDP _udp;
         AsyncClient * _tcpClients[FAUXMO_TCP_MAX_CLIENTS];
         TSetStateCallback _setStateCallback = NULL;
-        TSetStateWithColorCallback _setStateWithColorCallback = NULL;
+        TSetStateWithRGBColorCallback _setStateWithRGBColorCallback = NULL;
+        TSetStateWithHSColorCallback _setStateWithHSColorCallback = NULL;
 
         String _deviceJson(unsigned char id, bool all); 	// all = true means we are listing all devices so use full description template
 
@@ -144,6 +161,8 @@ class fauxmoESP {
 
         String _byte2hex(uint8_t zahl);
         String _makeMD5(String text);
-        byte* _hs2rgb(uint16_t hue, uint8_t sat);
-        byte* _ct2rgb(uint16_t ct);
+
+        rgb_color_t _kelvinToRGB(uint16_t ct);
+        hs_color_t _rgbToHS(rgb_color_t rgb);
+        rgb_color_t _hsToRGB(hs_color_t hs_color);
 };

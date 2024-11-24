@@ -128,8 +128,8 @@ String fauxmoESP::_deviceJson(unsigned char id, bool all = true) {
 			device.name, device.uniqueid,
 			device.state ? "true": "false",
 			device.value,
-			device.hue,
-			device.sat
+			device.hs_color.hue,
+			device.hs_color.sat
 		);
 	}
 	else
@@ -236,56 +236,106 @@ bool fauxmoESP::_onTCPList(AsyncClient *client, String url, String body) {
 
 }
 
-byte* fauxmoESP::_hs2rgb(uint16_t hue, uint8_t sat) {
-	byte *rgb = new byte[3]{0, 0, 0};
+hs_color_t fauxmoESP::_rgbToHS(rgb_color_t rgb) {
+    hs_color_t hs;
 
-	float h = ((float)hue)/65535.0;
-    float s = ((float)sat)/255.0;
+    float r = rgb.red / 255.0;
+    float g = rgb.green / 255.0;
+    float b = rgb.blue / 255.0;
 
-    byte i = floor(h*6);
-    float f = h * 6-i;
-    float p = 255 * (1-s);
-    float q = 255 * (1-f*s);
-    float t = 255 * (1-(1-f)*s);
-    switch (i%6) {
-      case 0: rgb[0]=255,rgb[1]=t,rgb[2]=p;break;
-      case 1: rgb[0]=q,rgb[1]=255,rgb[2]=p;break;
-      case 2: rgb[0]=p,rgb[1]=255,rgb[2]=t;break;
-      case 3: rgb[0]=p,rgb[1]=q,rgb[2]=255;break;
-      case 4: rgb[0]=t,rgb[1]=p,rgb[2]=255;break;
-      case 5: rgb[0]=255,rgb[1]=p,rgb[2]=q;
+    float maxRGB = max(r, max(g, b));
+    float minRGB = min(r, min(g, b));
+    float delta = maxRGB - minRGB;
+
+    // Calculate Hue
+    float h = 0;
+    if (delta == 0) {
+        h = 0;
+    } else if (maxRGB == r) {
+        h = fmod(((g - b) / delta), 6);
+    } else if (maxRGB == g) {
+        h = ((b - r) / delta) + 2;
+    } else {
+        h = ((r - g) / delta) + 4;
     }
+    if (h < 0) h += 6;
+
+    hs.hue = h * 182; // Convert to 0-65535 range
+    hs.sat = (maxRGB == 0) ? 0 : (delta / maxRGB) * 254; // Convert saturation to 0-254 range
+
+    return hs;
+}
+
+rgb_color_t fauxmoESP::_hsToRGB(hs_color_t hs_color) {
+	rgb_color_t rgb;
+
+    // Normalize the hue to a 0-360° range
+    float hue = hs_color.hue / 182.0; // Convert from 0-65535 to 0-360°
+    float sat = hs_color.sat / 255.0; // Convert saturation to 0.0-1.0
+
+    // Calculate the RGB components
+    float c = sat;                         // Chroma: max color intensity
+    float x = c * (1 - fabs(fmod(hue / 60.0, 2) - 1)); // Intermediary color
+    float m = 1 - c;                       // Adjust for saturation
+
+    float r_temp, g_temp, b_temp;
+
+    if (hue >= 0 && hue < 60) {
+        r_temp = c; g_temp = x; b_temp = 0;
+    } else if (hue >= 60 && hue < 120) {
+        r_temp = x; g_temp = c; b_temp = 0;
+    } else if (hue >= 120 && hue < 180) {
+        r_temp = 0; g_temp = c; b_temp = x;
+    } else if (hue >= 180 && hue < 240) {
+        r_temp = 0; g_temp = x; b_temp = c;
+    } else if (hue >= 240 && hue < 300) {
+        r_temp = x; g_temp = 0; b_temp = c;
+    } else {
+        r_temp = c; g_temp = 0; b_temp = x;
+    }
+
+    // Adjust to the 0-255 range
+    rgb.red = (r_temp + m) * 255;
+    rgb.green = (g_temp + m) * 255;
+    rgb.blue = (b_temp + m) * 255;
+
 	return rgb;
 }
 
-byte* fauxmoESP::_ct2rgb(uint16_t ct) {
-	byte *rgb = new byte[3]{0, 0, 0};
-	float temp = 10000/ ct; //kelvins = 1,000,000/mired (and that /100)
-    float r, g, b;
+rgb_color_t fauxmoESP::_kelvinToRGB(uint16_t kelvin) {
+    rgb_color_t color;
 
-    if (temp <= 66) { 
-      r = 255; 
-      g = temp;
-      g = 99.470802 * log(g) - 161.119568;
-      if (temp <= 19) {
-          b = 0;
-      } else {
-          b = temp-10;
-          b = 138.517731 * log(b) - 305.044793;
-      }
+    // Define limits for temperature ranges
+    kelvin = constrain(kelvin, 1000, 40000); // Kelvin range between 1000K and 40000K
+
+    float temperature = kelvin / 100.0;
+    float red, green, blue;
+
+    // Calculate RGB values based on the temperature (using simplified model)
+    if (temperature <= 66) {
+        red = 255;
+        green = temperature;
+        green = 99.4708025861 * log(green) - 161.1195681661;
+        if (temperature <= 19) {
+            blue = 0;
+        } else {
+            blue = temperature - 10;
+            blue = 138.5177312231 * log(blue) - 305.0447927307;
+        }
     } else {
-      r = temp - 60;
-      r = 329.698727 * pow(r, -0.13320476);
-      g = temp - 60;
-      g = 288.12217 * pow(g, -0.07551485 );
-      b = 255;
+        red = temperature - 60;
+        red = 329.698727446 * pow(red, -0.1332047592);
+        green = temperature - 60;
+        green = 288.1221695283 * pow(green, -0.0755148492);
+        blue = 255;
     }
-    
-    rgb[0] = (byte)constrain(r,0.1,255.1);
-    rgb[1] = (byte)constrain(g,0.1,255.1);
-    rgb[2] = (byte)constrain(b,0.1,255.1);
 
-	return rgb;
+    // Constrain the RGB values between 0 and 255
+    color.red = constrain(red, 0, 255);
+    color.green = constrain(green, 0, 255);
+    color.blue = constrain(blue, 0, 255);
+
+    return color;
 }
 
 bool fauxmoESP::_onTCPControl(AsyncClient *client, String url, String body) {
@@ -322,21 +372,15 @@ bool fauxmoESP::_onTCPControl(AsyncClient *client, String url, String body) {
 				uint16_t hue = body.substring(pos+5, pos_comma).toInt();
 				pos = body.indexOf("sat", pos_comma);
 				uint8_t sat = body.substring(pos+5).toInt();
-				byte* rgb = _hs2rgb(hue, sat);
-				_devices[id].rgb[0] = rgb[0];
-				_devices[id].rgb[1] = rgb[1];
-				_devices[id].rgb[2] = rgb[2];
-				_devices[id].hue = hue;
-				_devices[id].sat = sat;
+				_devices[id].hs_color.hue = hue;
+				_devices[id].hs_color.sat = sat;
 			} else if ((pos = body.indexOf("ct")) > 0) {
+				Serial.println(body);
 				_devices[id].state = true;
 				uint16_t ct = body.substring(pos+4).toInt();
-				byte* rgb = _ct2rgb(ct);
-				_devices[id].rgb[0] = rgb[0];
-				_devices[id].rgb[1] = rgb[1];
-				_devices[id].rgb[2] = rgb[2];
-				_devices[id].hue = 0;
-				_devices[id].sat = 0;
+				rgb_color_t rgb = _kelvinToRGB(ct);
+				hs_color_t hs_color = _rgbToHS(rgb);
+				_devices[id].hs_color = hs_color;
 			} else if (body.indexOf("false") > 0) {
 				_devices[id].state = false;
 			} else {
@@ -355,8 +399,12 @@ bool fauxmoESP::_onTCPControl(AsyncClient *client, String url, String body) {
 			if (_setStateCallback) {
 				_setStateCallback(id, _devices[id].name, _devices[id].state, _devices[id].value);
 			}
-			if (_setStateWithColorCallback) {
-				_setStateWithColorCallback(id, _devices[id].name, _devices[id].state, _devices[id].value, _devices[id].rgb);
+			if (_setStateWithRGBColorCallback) {
+				rgb_color_t rgb = _hsToRGB(_devices[id].hs_color);
+				_setStateWithRGBColorCallback(id, _devices[id].name, _devices[id].state, _devices[id].value, rgb);
+			}
+			if (_setStateWithHSColorCallback) {
+				_setStateWithHSColorCallback(id, _devices[id].name, _devices[id].state, _devices[id].value, _devices[id].hs_color);
 			}
 
 			return true;
@@ -603,19 +651,34 @@ bool fauxmoESP::setState(const char * device_name, bool state, unsigned char val
 	return setState(getDeviceId(device_name), state, value);
 }
 
-bool fauxmoESP::setState(unsigned char id, bool state, unsigned char value, byte* rgb){
+bool fauxmoESP::setState(unsigned char id, bool state, unsigned char value, rgb_color_t rgb){
 	if (id >= _devices.size()) return false;
 	bool success = setState(id, state, value);
 	if (success) {
-		_devices[id].rgb[0] = rgb[0];
-		_devices[id].rgb[1] = rgb[1];
-		_devices[id].rgb[2] = rgb[2];
+		hs_color_t hs_color = _rgbToHS(rgb);
+		_devices[id].hs_color.hue = hs_color.hue;
+		_devices[id].hs_color.sat = hs_color.sat;
 	}
 	return success;
 }
 
-bool fauxmoESP::setState(const char * device_name, bool state, unsigned char value, byte* rgb){
+bool fauxmoESP::setState(const char * device_name, bool state, unsigned char value, rgb_color_t rgb){
 	return setState(getDeviceId(device_name), state, value, rgb);
+}
+
+
+bool fauxmoESP::setState(unsigned char id, bool state, unsigned char value, hs_color_t hs_color){
+	if (id >= _devices.size()) return false;
+	bool success = setState(id, state, value);
+	if (success) {
+		_devices[id].hs_color.hue = hs_color.hue;
+		_devices[id].hs_color.sat = hs_color.sat;
+	}
+	return success;
+}
+
+bool fauxmoESP::setState(const char * device_name, bool state, unsigned char value, hs_color_t hs_color){
+	return setState(getDeviceId(device_name), state, value, hs_color);
 }
 
 // -----------------------------------------------------------------------------
